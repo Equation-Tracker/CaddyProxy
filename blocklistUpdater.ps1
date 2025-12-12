@@ -44,25 +44,26 @@ if ([string]::IsNullOrWhiteSpace($userInput)) {
 	Write-Host "Using local hosts file: $HOSTS_FILE" -ForegroundColor Green
 }
 
-# Count domain entries from hosts file (robust token parsing)
+# Count domain entries from hosts file (only 0.0.0.0 mappings)
 $domainCount = (Get-Content $HOSTS_FILE | ForEach-Object {
-        $line = $_.Trim()
-        if ($line -eq '' -or $line -match '^\s*#') { return }
+	$line = $_.Trim()
+	if ($line -eq '' -or $line -match '^\s*#') { return }
 
-        # Strip inline comments
-        $line = $line -replace '\s+#.*$',''
+	# Strip inline comments
+	$line = $line -replace '\s+#.*$',''
 
-        # Split tokens: first token is usually the IP, rest are hostnames
-        $tokens = -split $line
-        if ($tokens.Count -lt 2) { return }
+	# Split tokens: first token is usually the IP, rest are hostnames
+	$tokens = -split $line
+	if ($tokens.Count -lt 2) { return }
 
-        $ip = $tokens[0]
-        if ($ip -match '^(?:\d{1,3}\.){3}\d{1,3}$' -or $ip -match '^[0-9a-fA-F:]+$') {
-                for ($i = 1; $i -lt $tokens.Count; $i++) { $tokens[$i].Trim() }
-        }
+	$ip = $tokens[0]
+	# Only count domains pointed to 0.0.0.0
+	if ($ip -eq '0.0.0.0') {
+		for ($i = 1; $i -lt $tokens.Count; $i++) { $tokens[$i].Trim() }
+	}
 } | Where-Object { $_ -and $_ -notmatch '^\s*$' } | Measure-Object).Count
 
-Write-Host "✓ Found hosts file with $domainCount entries" -ForegroundColor Green
+Write-Host "✓ Found hosts file with $domainCount 0.0.0.0 entries" -ForegroundColor Green
 
 # ============================================================================
 # STEP 2: Extract domains from hosts file and create blocklist
@@ -81,10 +82,11 @@ Get-Content $HOSTS_FILE | ForEach-Object {
         $tokens = -split $line
         if ($tokens.Count -lt 2) { return }
 
-        $ip = $tokens[0]
-        if ($ip -match '^(?:0\.0\.0\.0|127\.0\.0\.1|::1|0:0:0:0:0:0:0:1|::)$' -or $ip -match '^(?:\d{1,3}\.){3}\d{1,3}$' -or $ip -match '^[0-9a-fA-F:]+$') {
-                for ($i = 1; $i -lt $tokens.Count; $i++) { $tokens[$i].Trim() }
-        }
+		$ip = $tokens[0]
+		# Only include domains explicitly mapped to 0.0.0.0
+		if ($ip -eq '0.0.0.0') {
+			for ($i = 1; $i -lt $tokens.Count; $i++) { $tokens[$i].Trim() }
+		}
 } | Where-Object { $_ -and $_ -notmatch '^\s*$' } | Sort-Object -Unique | Out-File -FilePath $blocklist -Encoding UTF8
 
 $blockCount = (Get-Content $blocklist).Count
