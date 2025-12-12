@@ -6,7 +6,7 @@
 # CONFIGURATION - CHANGE THESE IF NEEDED
 # ============================================================================
 
-$REMOTE_HOSTS_FILE = "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts"
+$REMOTE_HOSTS_FILE = "https://raw.githubusercontent.com/Equation-Tracker/CaddyProxy/refs/heads/main/hosts.txt"
 $HOSTS_FILE = "C:\\CaddyProxy\\hosts.txt"  # ← CHANGE THIS to your hosts file location
 $CADDY_DIR  = "C:\\CaddyProxy"             # Where to install everything
 $PROXY_PORT = 8080                         # Proxy port (change if needed)
@@ -506,3 +506,4 @@ Write-Host "🌐 Configure Windows Proxy:" -ForegroundColor Yellow
 Write-Host "   Settings → Network → Proxy → Manual" -ForegroundColor White
 Write-Host "   Address: 127.0.0.1  Port: $PROXY_PORT" -ForegroundColor White
 Write-Host ""
+
