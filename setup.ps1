@@ -87,10 +87,11 @@ $domainCount = (Get-Content $HOSTS_FILE | ForEach-Object {
         $tokens = -split $line
         if ($tokens.Count -lt 2) { return }
 
-        $ip = $tokens[0]
-        if ($ip -match '^(?:\d{1,3}\.){3}\d{1,3}$' -or $ip -match '^[0-9a-fA-F:]+$') {
-                for ($i = 1; $i -lt $tokens.Count; $i++) { $tokens[$i].Trim() }
-        }
+		$ip = $tokens[0]
+		# Only count domains that are explicitly mapped to 0.0.0.0
+		if ($ip -eq '0.0.0.0') {
+			for ($i = 1; $i -lt $tokens.Count; $i++) { $tokens[$i].Trim() }
+		}
 } | Where-Object { $_ -and $_ -notmatch '^\s*$' } | Measure-Object).Count
 
 Write-Host "✓ Found hosts file with $domainCount entries" -ForegroundColor Green
@@ -123,10 +124,11 @@ Get-Content $HOSTS_FILE | ForEach-Object {
         $tokens = -split $line
         if ($tokens.Count -lt 2) { return }
 
-        $ip = $tokens[0]
-        if ($ip -match '^(?:0\.0\.0\.0|127\.0\.0\.1|::1|0:0:0:0:0:0:0:1|::)$' -or $ip -match '^(?:\d{1,3}\.){3}\d{1,3}$' -or $ip -match '^[0-9a-fA-F:]+$') {
-                for ($i = 1; $i -lt $tokens.Count; $i++) { $tokens[$i].Trim() }
-        }
+		$ip = $tokens[0]
+		# Only include domains explicitly mapped to 0.0.0.0
+		if ($ip -eq '0.0.0.0') {
+			for ($i = 1; $i -lt $tokens.Count; $i++) { $tokens[$i].Trim() }
+		}
 } | Where-Object { $_ -and $_ -notmatch '^\s*$' } | Sort-Object -Unique | Out-File -FilePath $blocklist -Encoding UTF8
 
 $blockCount = (Get-Content $blocklist).Count
@@ -506,4 +508,3 @@ Write-Host "🌐 Configure Windows Proxy:" -ForegroundColor Yellow
 Write-Host "   Settings → Network → Proxy → Manual" -ForegroundColor White
 Write-Host "   Address: 127.0.0.1  Port: $PROXY_PORT" -ForegroundColor White
 Write-Host ""
-
