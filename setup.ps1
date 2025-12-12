@@ -45,9 +45,9 @@ Write-Host "[2/9] Hosts file selection..." -ForegroundColor Cyan
 
 # Prompt the user: empty = download default remote, URL = download that URL, otherwise treat as local path
 $prompt = "Enter hosts source — press Enter to download default remote ($REMOTE_HOSTS_FILE), or enter a URL (http(s)://...), or enter a local file path:"
-$input = Read-Host $prompt
+$userInput = Read-Host $prompt
 
-if ([string]::IsNullOrWhiteSpace($input)) {
+if ([string]::IsNullOrWhiteSpace($userInput)) {
 	Write-Host "Downloading default remote hosts from $REMOTE_HOSTS_FILE..." -ForegroundColor Cyan
 	try {
 		Invoke-WebRequest -Uri $REMOTE_HOSTS_FILE -OutFile $HOSTS_FILE -UseBasicParsing -ErrorAction Stop
@@ -56,17 +56,17 @@ if ([string]::IsNullOrWhiteSpace($input)) {
 		Write-Host "ERROR: Failed to download remote hosts: $($_.Exception.Message)" -ForegroundColor Red
 		exit 1
 	}
-} elseif ($input -match '^\s*https?://') {
-	Write-Host "Downloading hosts from $input..." -ForegroundColor Cyan
+} elseif ($userInput -match '^\s*https?://') {
+	Write-Host "Downloading hosts from $userInput..." -ForegroundColor Cyan
 	try {
-		Invoke-WebRequest -Uri $input -OutFile $HOSTS_FILE -UseBasicParsing -ErrorAction Stop
+		Invoke-WebRequest -Uri $userInput -OutFile $HOSTS_FILE -UseBasicParsing -ErrorAction Stop
 		Write-Host "✓ Downloaded remote hosts to $HOSTS_FILE" -ForegroundColor Green
 	} catch {
-		Write-Host "ERROR: Failed to download hosts from $input: $($_.Exception.Message)" -ForegroundColor Red
+		Write-Host "ERROR: Failed to download hosts from ${userInput}: $($_.Exception.Message)" -ForegroundColor Red
 		exit 1
 	}
 } else {
-	$path = $input.Trim()
+	$path = $userInput.Trim()
 	if (-not (Test-Path $path)) {
 		Write-Host "ERROR: File not found at: $path" -ForegroundColor Red
 		exit 1
