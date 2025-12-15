@@ -1,4 +1,4 @@
-# Caddy Filter Proxy - Complete Setup Script
+# Caddy Filter Proxy - Complete Setup Script with LOGGING
 # Run in PowerShell as Administrator
 # Prerequisites: Go installed, hosts file with blocked domains
 
@@ -104,6 +104,7 @@ Write-Host "[3/9] Creating directories..." -ForegroundColor Cyan
 
 New-Directory $CADDY_DIR
 New-Directory "$CADDY_DIR\\blockfilter"
+New-Directory "$CADDY_DIR\\logs"
 
 Write-Host "✓ Created/verified $CADDY_DIR" -ForegroundColor Green
 
@@ -135,21 +136,24 @@ $blockCount = (Get-Content $blocklist).Count
 Write-Host "✓ Created blocklist with $blockCount domains" -ForegroundColor Green
 
 # ============================================================================
-# STEP 5: Create the filter plugin (Go code)
+# STEP 5: Create the filter plugin (Go code) WITH LOGGING
 # ============================================================================
 
-Write-Host "[5/9] Creating filter plugin..." -ForegroundColor Cyan
+Write-Host "[5/9] Creating filter plugin with logging..." -ForegroundColor Cyan
 
 $pluginCode = @'
 package blockfilter
 
 import (
 	"bufio"
+	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"golang.org/x/net/publicsuffix"
@@ -167,8 +171,12 @@ func init() {
 
 type BlockFilter struct {
 	BlocklistPath string `json:"blocklist_path,omitempty"`
-	blocked       map[string]struct{}
-	mu            sync.RWMutex
+	LogPath       string `json:"log_path,omitempty"`
+
+	blocked map[string]struct{}
+	mu      sync.RWMutex
+	logFile *os.File
+	logMu   sync.Mutex
 }
 
 func (BlockFilter) CaddyModule() caddy.ModuleInfo {
@@ -180,9 +188,24 @@ func (BlockFilter) CaddyModule() caddy.ModuleInfo {
 
 func (b *BlockFilter) Provision(ctx caddy.Context) error {
 	b.blocked = make(map[string]struct{}, 100000)
+
 	if b.BlocklistPath == "" {
 		b.BlocklistPath = "C:\\CaddyProxy\\blocklist.txt"
 	}
+
+	if b.LogPath == "" {
+		b.LogPath = "C:\\CaddyProxy\\logs\\blocked.log"
+	}
+
+	// Open log file for appending
+	var err error
+	b.logFile, err = os.OpenFile(b.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file: %v", err)
+	}
+
+	log.Printf("Block filter logging to: %s", b.LogPath)
+
 	return b.loadBlocklist()
 }
 
@@ -241,6 +264,8 @@ func (b *BlockFilter) loadBlocklist() error {
 		}
 		b.blocked[line] = struct{}{}
 	}
+
+	log.Printf("Loaded %d blocked domains", len(b.blocked))
 	return scanner.Err()
 }
 
@@ -315,8 +340,41 @@ func (b *BlockFilter) isBlocked(host string) bool {
 	return false
 }
 
+func (b *BlockFilter) logBlocked(host, url, clientIP string) {
+	b.logMu.Lock()
+	defer b.logMu.Unlock()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	logLine := fmt.Sprintf("[%s] BLOCKED | Host: %s | URL: %s | Client: %s\n",
+		timestamp, host, url, clientIP)
+
+	if b.logFile != nil {
+		b.logFile.WriteString(logLine)
+		b.logFile.Sync() // Flush to disk immediately
+	}
+}
+
 func (b *BlockFilter) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	if b.isBlocked(r.Host) {
+		// Extract client IP
+		clientIP := r.RemoteAddr
+		if i := strings.LastIndex(clientIP, ":"); i != -1 {
+			clientIP = clientIP[:i]
+		}
+
+		// Construct full URL
+		fullURL := r.URL.String()
+		if r.URL.Scheme == "" {
+			scheme := "http"
+			if r.TLS != nil {
+				scheme = "https"
+			}
+			fullURL = scheme + "://" + r.Host + fullURL
+		}
+
+		// Log the blocked request
+		b.logBlocked(r.Host, fullURL, clientIP)
+
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte("Access blocked by filter"))
 		return nil
@@ -327,11 +385,17 @@ func (b *BlockFilter) ServeHTTP(w http.ResponseWriter, r *http.Request, next cad
 func (b *BlockFilter) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
 		for d.NextBlock(0) {
-			if d.Val() == "blocklist" {
+			switch d.Val() {
+			case "blocklist":
 				if !d.NextArg() {
 					return d.Err("blocklist requires a path argument")
 				}
 				b.BlocklistPath = d.Val()
+			case "log":
+				if !d.NextArg() {
+					return d.Err("log requires a path argument")
+				}
+				b.LogPath = d.Val()
 			}
 		}
 	}
@@ -359,12 +423,15 @@ module blockfilter
 
 go 1.21
 
-require github.com/caddyserver/caddy/v2 v2.7.6
+require (
+	github.com/caddyserver/caddy/v2 v2.7.6
+	golang.org/x/net v0.17.0
+)
 '@
 
 Set-Content -Path "$CADDY_DIR\\blockfilter\\go.mod" -Value $goModContent -Encoding UTF8
 
-Write-Host "✓ Created plugin files" -ForegroundColor Green
+Write-Host "✓ Created plugin files with logging support" -ForegroundColor Green
 
 # ============================================================================
 # STEP 6: Download dependencies for the plugin
@@ -403,10 +470,10 @@ if (-not (Test-Path "$CADDY_DIR\\caddy.exe")) {
     exit 1
 }
 
-Write-Host "✓ Caddy built successfully" -ForegroundColor Green
+Write-Host "✓ Caddy built successfully with logging support" -ForegroundColor Green
 
 # ============================================================================
-# STEP 8: Create Caddyfile configuration
+# STEP 8: Create Caddyfile configuration with logging
 # ============================================================================
 
 Write-Host "[8/9] Creating configuration..." -ForegroundColor Cyan
@@ -421,6 +488,7 @@ $caddyfileContent = @"
     route {
         block_filter {
             blocklist $CADDY_DIR\\blocklist.txt
+            log $CADDY_DIR\\logs\\blocked.log
         }
 
         forward_proxy {
@@ -435,7 +503,7 @@ $caddyfileContent = @"
 
 Set-Content -Path "$CADDY_DIR\\Caddyfile" -Value $caddyfileContent -Encoding UTF8
 
-Write-Host "✓ Configuration created" -ForegroundColor Green
+Write-Host "✓ Configuration created with logging enabled" -ForegroundColor Green
 
 # ============================================================================
 # STEP 9: Create Windows Service (optional)
@@ -454,8 +522,6 @@ if ($createService -eq "y") {
     Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip
     Expand-Archive -Path $nssmZip -DestinationPath "$CADDY_DIR\\nssm" -Force
 
-    New-Directory "$CADDY_DIR\\logs"
-
     # adjust path if the zip layout differs; this assumes nssm-2.24\win64\nssm.exe
     $nssmExe = Get-ChildItem -Path "$CADDY_DIR\\nssm" -Recurse -Filter "nssm.exe" | Where-Object { $_.FullName -match 'win64' } | Select-Object -First 1
     if (-not $nssmExe) {
@@ -465,10 +531,10 @@ if ($createService -eq "y") {
         $nssmPath = $nssmExe.FullName
         & $nssmPath install CaddyProxy "$CADDY_DIR\\caddy.exe" "run" "--config" "$CADDY_DIR\\Caddyfile"
         & $nssmPath set CaddyProxy AppDirectory $CADDY_DIR
-        & $nssmPath set CaddyProxy AppStdout C:\CaddyProxy\logs\caddy-out.log
-        & $nssmPath set CaddyProxy AppStderr C:\CaddyProxy\logs\caddy-err.log
+        & $nssmPath set CaddyProxy AppStdout $CADDY_DIR\logs\caddy-out.log
+        & $nssmPath set CaddyProxy AppStderr $CADDY_DIR\logs\caddy-err.log
         & $nssmPath set CaddyProxy DisplayName "Caddy Filter Proxy"
-        & $nssmPath set CaddyProxy Description "O(1) filtering proxy"
+        & $nssmPath set CaddyProxy Description "O(1) filtering proxy with logging"
         & $nssmPath set CaddyProxy Start SERVICE_AUTO_START
 
         Start-Service CaddyProxy
@@ -489,6 +555,7 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "📁 Installation directory: $CADDY_DIR" -ForegroundColor Cyan
 Write-Host "📝 Blocklist: $CADDY_DIR\\blocklist.txt ($blockCount domains)" -ForegroundColor Cyan
+Write-Host "📊 Blocked requests log: $CADDY_DIR\\logs\\blocked.log" -ForegroundColor Cyan
 Write-Host "🌐 Proxy address: 127.0.0.1:$PROXY_PORT" -ForegroundColor Cyan
 Write-Host ""
 
@@ -503,6 +570,9 @@ if ($createService -eq "y") {
     Write-Host "   .\\caddy.exe run --config Caddyfile" -ForegroundColor White
 }
 
+Write-Host ""
+Write-Host "📊 View blocked requests log:" -ForegroundColor Yellow
+Write-Host "   Get-Content $CADDY_DIR\\logs\\blocked.log -Tail 20 -Wait" -ForegroundColor White
 Write-Host ""
 Write-Host "🌐 Configure Windows Proxy:" -ForegroundColor Yellow
 Write-Host "   Settings → Network → Proxy → Manual" -ForegroundColor White
